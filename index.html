@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Stickman Ultra Fight</title>
+    <style>
+        body { margin: 0; background: #1a1a1a; color: white; font-family: 'Segoe UI', sans-serif; overflow: hidden; touch-action: none; }
+        canvas { display: block; background: #fff; margin: 0 auto; border-bottom: 5px solid #444; cursor: crosshair; }
+        
+        /* UI Overlay */
+        .hud { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-around; pointer-events: none; }
+        .health-bar { width: 200px; height: 20px; background: #444; border: 2px solid #fff; position: relative; }
+        .health-fill { height: 100%; background: #ff4444; width: 100%; transition: width 0.2s; }
+        
+        /* Mobile Controls */
+        .controls { position: fixed; bottom: 30px; width: 100%; display: flex; justify-content: space-between; padding: 0 30px; box-sizing: border-box; }
+        .btn-group { display: flex; gap: 15px; }
+        .btn { width: 70px; height: 70px; background: rgba(0,0,0,0.6); border: 2px solid #fff; color: white; 
+                   border-radius: 50%; display: flex; align-items: center; justify-content: center; 
+                   font-weight: bold; user-select: none; -webkit-tap-highlight-color: transparent; }
+        .btn:active { background: rgba(255, 255, 255, 0.4); transform: scale(0.9); }
+        .special-btn { background: rgba(255, 165, 0, 0.6); width: 80px; height: 80px; }
+
+        @media (max-pointer: fine) { .controls { display: none; } } /* Hide on Desktop */
+    </style>
+</head>
+<body>
+
+<div class="hud">
+    <div>P1 Health<div class="health-bar"><div id="p1Fill" class="health-fill"></div></div></div>
+    <div>P2 Health<div class="health-bar"><div id="p2Fill" class="health-fill"></div></div></div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div class="controls">
+    <div class="btn-group">
+        <div class="btn" id="btnLeft">←</div>
+        <div class="btn" id="btnRight">→</div>
+    </div>
+    <div class="btn-group">
+        <div class="btn" id="btnJump">UP</div>
+        <div class="btn" id="btnAtk">HIT</div>
+        <div class="btn special-btn" id="btnSpec">ULT</div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Adaptive Screen Size
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight * 0.6;
+}
+window.onresize = resize;
+resize();
+
+const keys = {};
+const GRAVITY = 0.8;
+const GROUND = canvas.height - 20;
+
+// --- INPUT HANDLERS ---
+window.onkeydown = (e) => keys[e.code] = true;
+window.onkeyup = (e) => keys[e.code] = false;
+
+function bindTouch(id, code) {
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[code] = true; });
+    el.addEventListener('touchend', (e) => { e.preventDefault(); keys[code] = false; });
+}
+bindTouch('btnLeft', 'KeyA'); bindTouch('btnRight', 'KeyD');
+bindTouch('btnJump', 'KeyW'); bindTouch('btnAtk', 'KeyF');
+bindTouch('btnSpec', 'KeyR');
+
+// --- GAME OBJECTS ---
+class Fighter {
+    constructor(x, color, controls, isPlayer2 = false) {
+        this.x = x; this.y = GROUND - 80;
+        this.color = color;
+        this.controls = controls;
+        this.velX = 0; this.velY = 0;
+        this.health = 100;
+        this.isAttacking = false;
+        this.facing = isPlayer2 ? -1 : 1;
+        this.isPlayer2 = isPlayer2;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 4;
+        ctx.lineCap = "round";
+
+        // Head
+        ctx.beginPath();
+        ctx.arc(0, -60, 12, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Body
+        ctx.beginPath();
+        ctx.moveTo(0, -48); ctx.lineTo(0, 0);
+        // Arms (changes if attacking)
+        let armPos = this.isAttacking ? 30 * this.facing : 15;
+        ctx.moveTo(0, -35); ctx.lineTo(armPos, -20);
+        // Legs
+        ctx.moveTo(0, 0); ctx.lineTo(-15, 30);
+        ctx.moveTo(0, 0); ctx.lineTo(15, 30);
+        ctx.stroke();
+
+        // Attack Effect
+        if (this.isAttacking) {
+            ctx.fillStyle = "rgba(255, 255, 0, 0.5)";
+            ctx.beginPath();
+            ctx.arc(armPos, -20, 15, 0, Math.PI*2);
+            ctx.fill();
+        }
+        ctx.restore();
+    }
+
+    update(opponent) {
+        // Horizontal Movement
+        if (keys[this.controls.left]) { this.x -= 6; this.facing = -1; }
+        if (keys[this.controls.right]) { this.x += 6; this.facing = 1; }
+
+        // Jump
+        if (keys[this.controls.jump] && this.y >= GROUND - 35) this.velY = -16;
+
+        // Physics
+        this.velY += GRAVITY;
+        this.y += this.velY;
+        if (this.y > GROUND - 35) { this.y = GROUND - 35; this.velY = 0; }
+
+        // Attack Logic
+        if ((keys[this.controls.attack] || keys[this.controls.special]) && !this.isAttacking) {
+            this.isAttacking = true;
+            let dmg = keys[this.controls.special] ? 15 : 5;
+            
+            // Hitbox Check
+            let dist = Math.abs(this.x - opponent.x);
+            if (dist < 60 && Math.abs(this.y - opponent.y) < 40) {
+                opponent.health -= dmg;
+                screenShake();
+            }
+            
+            setTimeout(() => this.isAttacking = false, 150);
+        }
+
+        // Boundary
+        this.x = Math.max(20, Math.min(canvas.width - 20, this.x));
+    }
+}
+
+function screenShake() {
+    canvas.style.transform = `translate(${(Math.random()-0.5)*10}px, ${(Math.random()-0.5)*10}px)`;
+    setTimeout(() => canvas.style.transform = `translate(0,0)`, 50);
+}
+
+// Player 1 (WASD + F/R) | Player 2 (Arrows + M/L)
+const p1 = new Fighter(100, "#ff0000", {left:'KeyA', right:'KeyD', jump:'KeyW', attack:'KeyF', special:'KeyR'});
+const p2 = new Fighter(canvas.width - 100, "#0000ff", {left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'KeyM', special:'KeyL'}, true);
+
+function loop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw Ground
+    ctx.fillStyle = "#444";
+    ctx.fillRect(0, GROUND, canvas.width, 20);
+
+    p1.update(p2);
+    p2.update(p1);
+    
+    p1.draw();
+    p2.draw();
+
+    // Update HUD
+    document.getElementById('p1Fill').style.width = p1.health + "%";
+    document.getElementById('p2Fill').style.width = p2.health + "%";
+
+    if (p1.health <= 0 || p2.health <= 0) {
+        alert(p1.health <= 0 ? "Player 2 Wins!" : "Player 1 Wins!");
+        p1.health = 100; p2.health = 100; p1.x = 100; p2.x = canvas.width-100;
+    }
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
